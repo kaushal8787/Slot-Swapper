@@ -50,36 +50,66 @@ const connectToMongoDB = async () => {
     // Parse and validate MongoDB URI
     let uri = process.env.MONGODB_URI;
     
-    // Log connection attempt (safely)
-    try {
-      const maskedUri = uri.replace(
-        /(mongodb\+srv:\/\/)([^:]+):([^@]+)@([^/]+)(\/.*)?/,
-        (_, protocol, username, pass, host, db) => `${protocol}${username}:****@${host}${db || ''}`
-      );
-      console.log('Attempting connection to:', maskedUri);
-    } catch (e) {
-      console.log('Could not mask URI for logging');
+    // Debug log (without sensitive info)
+    console.log('Environment check:', {
+      hasUri: !!uri,
+      environment: process.env.NODE_ENV,
+      vercel: !!process.env.VERCEL
+    });
+
+    // Basic format validation
+    if (!uri) {
+      throw new Error('MONGODB_URI is undefined or empty');
     }
 
-    // Validate URI format
-    if (!uri.startsWith('mongodb+srv://') && !uri.startsWith('mongodb://')) {
-      throw new Error('Invalid MongoDB URI format. Must start with mongodb+srv:// or mongodb://');
+    // Clean the URI - remove any whitespace or quotes
+    uri = uri.trim().replace(/^["']|["']$/g, '');
+
+    // Validate basic URI structure
+    if (!uri.includes('@') || !uri.includes('://')) {
+      throw new Error('MongoDB URI missing required components (protocol or credentials)');
     }
 
-    // Ensure proper encoding of username and password
     try {
-      const urlParts = new URL(uri);
-      const username = decodeURIComponent(urlParts.username);
-      const password = decodeURIComponent(urlParts.password);
-      const host = urlParts.host;
-      const path = urlParts.pathname;
-      const search = urlParts.search;
+      // Split URI into parts for safer handling
+      const [protocol, rest] = uri.split('://');
+      if (!protocol || !rest) {
+        throw new Error('Invalid URI format - cannot parse protocol');
+      }
+
+      // Validate protocol
+      if (protocol !== 'mongodb+srv' && protocol !== 'mongodb') {
+        throw new Error('Invalid protocol - must be mongodb+srv:// or mongodb://');
+      }
+
+      // Split credentials and host
+      const [credentials, hostPart] = rest.split('@');
+      if (!credentials || !hostPart) {
+        throw new Error('Invalid URI format - missing credentials or host');
+      }
+
+      // Split username and password
+      const [username, password] = credentials.split(':');
+      if (!username || !password) {
+        throw new Error('Invalid URI format - missing username or password');
+      }
+
+      // Rebuild URI with proper encoding
+      uri = `${protocol}://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${hostPart}`;
+
+      // Validate the final URI
+      new URL(uri);
       
-      // Rebuild URI with properly encoded components
-      uri = `mongodb+srv://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}${path}${search}`;
+      // Log successful URI parsing (without credentials)
+      const maskedUri = uri.replace(
+        /\/\/(.*?):(.*?)@/,
+        '//***:***@'
+      );
+      console.log('Valid MongoDB URI format:', maskedUri);
+      
     } catch (e) {
-      console.error('Error parsing MongoDB URI:', e.message);
-      throw new Error('Invalid MongoDB URI format: ' + e.message);
+      console.error('MongoDB URI validation error:', e.message);
+      throw new Error('MongoDB URI validation failed: ' + e.message);
     }
 
     // Close existing connection if any
@@ -155,11 +185,45 @@ app.use(async (req, res, next) => {
   }
 });
 
+// Test MongoDB URI format
+const testMongoDBUri = (uri) => {
+  if (!uri) return { isValid: false, error: 'URI is empty' };
+  
+  try {
+    // Clean the URI
+    uri = uri.trim().replace(/^["']|["']$/g, '');
+    
+    // Check protocol
+    if (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://')) {
+      return { isValid: false, error: 'Invalid protocol' };
+    }
+    
+    // Parse URL
+    const url = new URL(uri);
+    
+    // Check required components
+    if (!url.username || !url.password) {
+      return { isValid: false, error: 'Missing credentials' };
+    }
+    
+    if (!url.hostname) {
+      return { isValid: false, error: 'Missing hostname' };
+    }
+    
+    return { isValid: true, uri: uri.replace(/\/\/(.*?):(.*?)@/, '//***:***@') };
+  } catch (e) {
+    return { isValid: false, error: e.message };
+  }
+};
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
   try {
     const dbState = mongoose.connection.readyState;
     let pingResult = null;
+    
+    // Test MongoDB URI format
+    const uriTest = testMongoDBUri(process.env.MONGODB_URI);
     
     if (dbState === 1) {
       try {
@@ -180,14 +244,24 @@ app.get('/health', async (req, res) => {
         host: mongoose.connection.host,
         name: mongoose.connection.name
       },
-      vercel: !!process.env.VERCEL
+      vercel: !!process.env.VERCEL,
+      mongoUri: {
+        exists: !!process.env.MONGODB_URI,
+        validFormat: uriTest.isValid,
+        formatError: uriTest.isValid ? null : uriTest.error
+      }
     });
   } catch (error) {
     console.error('Health check error:', error);
     res.status(500).json({
       status: 'error',
       error: error.message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      mongoUri: {
+        exists: !!process.env.MONGODB_URI,
+        validFormat: false,
+        formatError: error.message
+      }
     });
   }
 });
