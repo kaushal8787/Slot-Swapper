@@ -7,14 +7,27 @@ require('dotenv').config();
 
 const app = express();
 
+// Test route
+app.get('/test', (req, res) => {
+  res.json({ message: 'Backend is working!' });
+});
+
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['https://frontend-7texima5t-kaushal8787s-projects.vercel.app', 'http://localhost:3000'],
+  credentials: true
+}));
 app.use(express.json());
 
 // MongoDB Connection
+console.log('Attempting to connect to MongoDB...');
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+}).then(() => {
+  console.log('Successfully connected to MongoDB.');
+}).catch(err => {
+  console.error('MongoDB connection error:', err);
 });
 
 // User Schema
@@ -439,6 +452,18 @@ app.post('/api/swap-response/:requestId', authenticateToken, async (req, res) =>
 
 const PORT = process.env.PORT || 5000;
 
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Server Error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error', 
+    message: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Environment:', process.env.NODE_ENV);
+  console.log('MongoDB URI:', process.env.MONGODB_URI ? 'Set' : 'Not set');
 });
