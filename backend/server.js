@@ -25,9 +25,10 @@ app.get('/test-db', async (req, res) => {
 
     // Try to perform a test operation
     let testOp = 'Not attempted';
+    let pingResult = null;
     if (dbState === 1) {
       try {
-        await mongoose.connection.db.admin().ping();
+        pingResult = await mongoose.connection.db.admin().ping();
         testOp = 'Success';
       } catch (err) {
         testOp = `Failed: ${err.message}`;
@@ -36,27 +37,57 @@ app.get('/test-db', async (req, res) => {
 
     // Mask sensitive parts of MongoDB URI
     let maskedUri = 'Not set';
+    let parsedUri = {};
     if (process.env.MONGODB_URI) {
       maskedUri = process.env.MONGODB_URI.replace(
         /(mongodb\+srv:\/\/)([^:]+):([^@]+)@([^/]+)(.*)/,
         (match, p1, p2, p3, p4, p5) => `${p1}${p2}:****@${p4}${p5}`
       );
+
+      // Parse URI components (safely)
+      try {
+        const uriObject = new URL(process.env.MONGODB_URI);
+        parsedUri = {
+          protocol: uriObject.protocol,
+          hostname: uriObject.hostname,
+          pathname: uriObject.pathname,
+          search: uriObject.search
+        };
+      } catch (e) {
+        parsedUri = { error: 'Invalid URI format' };
+      }
     }
     
+    // Get detailed connection info
+    const connInfo = {
+      readyState: mongoose.connection.readyState,
+      modelNames: Object.keys(mongoose.connection.models),
+      config: mongoose.connection.config || {},
+      host: mongoose.connection.host,
+      port: mongoose.connection.port,
+      name: mongoose.connection.name
+    };
+
     res.json({ 
       status: 'success',
       dbConnection: stateMessages[dbState],
       mongodbUri: maskedUri,
+      uriInfo: parsedUri,
       testOperation: testOp,
-      host: mongoose.connection.host || 'Not connected',
-      name: mongoose.connection.name || 'Not connected',
-      port: mongoose.connection.port || 'Not connected',
-      error: mongoose.connection.error || 'No error'
+      pingResult: pingResult,
+      connectionInfo: connInfo,
+      error: mongoose.connection.error ? {
+        message: mongoose.connection.error.message,
+        code: mongoose.connection.error.code,
+        name: mongoose.connection.error.name
+      } : 'No error'
     });
   } catch (error) {
     res.status(500).json({ 
       status: 'error',
       message: error.message,
+      errorName: error.name,
+      errorCode: error.code,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
@@ -79,17 +110,40 @@ const connectWithRetry = async (retries = 5) => {
   }
 
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
+    // Close existing connection if any
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close();
+    }
+
+    // Parse the connection string to validate it
+    const uri = process.env.MONGODB_URI;
+    console.log('Connecting to database:', uri.split('@')[1]); // Log only the host part
+
+    await mongoose.connect(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 10000, // Timeout after 10s
-      socketTimeoutMS: 45000, // Close sockets after 45s
+      serverSelectionTimeoutMS: 30000, // Increased timeout to 30s
+      socketTimeoutMS: 45000,
       keepAlive: true,
-      keepAliveInitialDelay: 300000 // Initial delay of 5 minutes
+      keepAliveInitialDelay: 300000,
+      retryWrites: true,
+      w: 'majority',
+      authSource: 'admin',
+      ssl: true,
+      tls: true,
+      tlsAllowInvalidCertificates: false
     });
     console.log('MongoDB connected successfully');
   } catch (err) {
-    console.error('MongoDB connection error:', err);
+    console.error('MongoDB connection error details:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+      codeName: err.codeName,
+      errorLabels: err.errorLabels,
+      connectionGeneration: err.connectionGeneration
+    });
+    
     if (retries > 0) {
       console.log(`Retrying connection... (${retries} attempts left)`);
       setTimeout(() => connectWithRetry(retries - 1), 5000);
