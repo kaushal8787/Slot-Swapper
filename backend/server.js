@@ -20,18 +20,23 @@ app.get('/', (req, res) => {
   });
 });
 
+// Suppress deprecation warnings
+process.removeAllListeners('warning');
+
 // MongoDB Connection
 console.log('Attempting to connect to MongoDB...');
-console.log('MongoDB URI:', process.env.MONGODB_URI ? 'URI is set' : 'URI is not set');
 
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   retryWrites: true,
+  serverSelectionTimeoutMS: 5000, // 5 second timeout
   w: 'majority',
   dbName: 'slotswapper',
 }).then(() => {
   console.log('Connected to MongoDB successfully');
+  console.log('Database Name:', mongoose.connection.name);
+  console.log('Database Host:', mongoose.connection.host);
   
   // Add connection status route
   app.get('/api/status', async (req, res) => {
