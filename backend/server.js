@@ -119,11 +119,18 @@ const connectWithRetry = async (retries = 5) => {
     const uri = process.env.MONGODB_URI;
     console.log('Connecting to database:', uri.split('@')[1]); // Log only the host part
 
-    await mongoose.connect(uri, {
+    // Encode username and password in URI
+    const fixedUri = uri.replace(
+      /(mongodb\+srv:\/\/)([^:]+):([^@]+)@/,
+      (match, p1, p2, p3) => `${p1}${encodeURIComponent(p2)}:${encodeURIComponent(p3)}@`
+    );
+
+    await mongoose.connect(fixedUri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 30000, // Increased timeout to 30s
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 60000, // Increased timeout to 60s
+      socketTimeoutMS: 75000,
+      connectTimeoutMS: 60000,
       keepAlive: true,
       keepAliveInitialDelay: 300000,
       retryWrites: true,
@@ -131,7 +138,7 @@ const connectWithRetry = async (retries = 5) => {
       authSource: 'admin',
       ssl: true,
       tls: true,
-      tlsAllowInvalidCertificates: false
+      tlsAllowInvalidCertificates: true // Temporarily allow invalid certs for testing
     });
     console.log('MongoDB connected successfully');
   } catch (err) {
