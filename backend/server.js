@@ -6,296 +6,439 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors({
-  origin: [
-    'https://frontend-7texima5t-kaushal8787s-projects.vercel.app', 
-    'http://localhost:3000',
-    /\.vercel\.app$/,  // Allow all Vercel subdomains
-    process.env.FRONTEND_URL // Allow configured frontend URL
-  ].filter(Boolean), // Remove any undefined values
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Track connection status
-let isConnected = false;
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
-// MongoDB Connection setup
-mongoose.set('strictQuery', false);
+// User Schema
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now }
+});
 
-// Create MongoDB client with custom settings
-const connectToMongoDB = async () => {
-  try {
-    // Check existing connection
-    if (isConnected && mongoose.connection.readyState === 1) {
-      console.log('Using existing database connection');
-      return mongoose.connection;
-    }
+const User = mongoose.model('User', userSchema);
 
-    // Reset connection state
-    isConnected = false;
+// Event Schema
+const eventSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  startTime: { type: Date, required: true },
+  endTime: { type: Date, required: true },
+  status: { 
+    type: String, 
+    enum: ['BUSY', 'SWAPPABLE', 'SWAP_PENDING'], 
+    default: 'BUSY' 
+  },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  createdAt: { type: Date, default: Date.now }
+});
 
-    // Validate MongoDB URI
-    if (!process.env.MONGODB_URI) {
-      throw new Error('MONGODB_URI environment variable is not set!');
-    }
+const Event = mongoose.model('Event', eventSchema);
 
-    // Parse and validate MongoDB URI
-    let uri = process.env.MONGODB_URI;
-    
-    // Debug log (without sensitive info)
-    console.log('Environment check:', {
-      hasUri: !!uri,
-      environment: process.env.NODE_ENV,
-      vercel: !!process.env.VERCEL
-    });
+// SwapRequest Schema
+const swapRequestSchema = new mongoose.Schema({
+  requesterId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  requesterSlotId: { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true },
+  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  ownerSlotId: { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true },
+  status: { 
+    type: String, 
+    enum: ['PENDING', 'ACCEPTED', 'REJECTED'], 
+    default: 'PENDING' 
+  },
+  createdAt: { type: Date, default: Date.now }
+});
 
-    // Basic format validation
-    if (!uri) {
-      throw new Error('MONGODB_URI is undefined or empty');
-    }
+const SwapRequest = mongoose.model('SwapRequest', swapRequestSchema);
 
-    // Clean the URI - remove any whitespace or quotes
-    uri = uri.trim().replace(/^["']|["']$/g, '');
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
-    // Validate basic URI structure
-    if (!uri.includes('@') || !uri.includes('://')) {
-      throw new Error('MongoDB URI missing required components (protocol or credentials)');
-    }
+// Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
 
-    try {
-      // Split URI into parts for safer handling
-      const [protocol, rest] = uri.split('://');
-      if (!protocol || !rest) {
-        throw new Error('Invalid URI format - cannot parse protocol');
-      }
-
-      // Validate protocol
-      if (protocol !== 'mongodb+srv' && protocol !== 'mongodb') {
-        throw new Error('Invalid protocol - must be mongodb+srv:// or mongodb://');
-      }
-
-      // Split credentials and host
-      const [credentials, hostPart] = rest.split('@');
-      if (!credentials || !hostPart) {
-        throw new Error('Invalid URI format - missing credentials or host');
-      }
-
-      // Split username and password
-      const [username, password] = credentials.split(':');
-      if (!username || !password) {
-        throw new Error('Invalid URI format - missing username or password');
-      }
-
-      // Rebuild URI with proper encoding
-      uri = `${protocol}://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${hostPart}`;
-
-      // Validate the final URI
-      new URL(uri);
-      
-      // Log successful URI parsing (without credentials)
-      const maskedUri = uri.replace(
-        /\/\/(.*?):(.*?)@/,
-        '//***:***@'
-      );
-      console.log('Valid MongoDB URI format:', maskedUri);
-      
-    } catch (e) {
-      console.error('MongoDB URI validation error:', e.message);
-      throw new Error('MongoDB URI validation failed: ' + e.message);
-    }
-
-    // Close existing connection if any
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.connection.close();
-    }
-
-    console.log('Attempting new MongoDB connection...');
-    
-    // Connect with optimized serverless settings
-    await mongoose.connect(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 30000,
-      connectTimeoutMS: 30000,
-      socketTimeoutMS: 45000,
-      maxPoolSize: 1,
-      minPoolSize: 0,
-      retryWrites: true,
-      w: 'majority',
-      heartbeatFrequencyMS: 10000,
-      maxIdleTimeMS: 30000,
-      autoCreate: false,
-      bufferCommands: false,
-      readPreference: 'primary',
-      family: 4, // Force IPv4
-      dnsSrvMaxRetries: 5 // Increase DNS retry attempts
-    });
-
-    isConnected = true;
-    console.log('MongoDB connected successfully');
-    return mongoose.connection;
-
-  } catch (error) {
-    console.error('MongoDB connection error:', {
-      name: error.name,
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-    throw error;
+  if (!token) {
+    return res.status(401).json({ error: 'Access denied. No token provided.' });
   }
-};
 
-// Database connection middleware for serverless environment
-app.use(async (req, res, next) => {
   try {
-    console.log('Connection middleware - Start');
-    console.log('Current connection state:', mongoose.connection.readyState);
-
-    if (mongoose.connection.readyState !== 1) {
-      console.log('No active connection, attempting to connect...');
-      await connectToMongoDB();
-      console.log('Connection established successfully');
-    } else {
-      console.log('Using existing connection');
-    }
-
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.userId;
     next();
   } catch (error) {
-    console.error('Database connection error details:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      mongoState: mongoose.connection.readyState
-    });
-
-    res.status(500).json({ 
-      error: 'Database connection error',
-      details: error.message,
-      state: mongoose.connection.readyState
-    });
-  }
-});
-
-// Test MongoDB URI format
-const testMongoDBUri = (uri) => {
-  if (!uri) return { isValid: false, error: 'URI is empty' };
-  
-  try {
-    // Clean the URI
-    uri = uri.trim().replace(/^["']|["']$/g, '');
-    
-    // Check protocol
-    if (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://')) {
-      return { isValid: false, error: 'Invalid protocol' };
-    }
-    
-    // Parse URL
-    const url = new URL(uri);
-    
-    // Check required components
-    if (!url.username || !url.password) {
-      return { isValid: false, error: 'Missing credentials' };
-    }
-    
-    if (!url.hostname) {
-      return { isValid: false, error: 'Missing hostname' };
-    }
-    
-    return { isValid: true, uri: uri.replace(/\/\/(.*?):(.*?)@/, '//***:***@') };
-  } catch (e) {
-    return { isValid: false, error: e.message };
+    res.status(403).json({ error: 'Invalid token.' });
   }
 };
 
-// Health check endpoint
-app.get('/health', async (req, res) => {
+// ==================== AUTH ROUTES ====================
+
+// Sign Up
+app.post('/api/auth/signup', async (req, res) => {
   try {
-    const dbState = mongoose.connection.readyState;
-    let pingResult = null;
-    
-    // Test MongoDB URI format
-    const uriTest = testMongoDBUri(process.env.MONGODB_URI);
-    
-    if (dbState === 1) {
-      try {
-        pingResult = await mongoose.connection.db.admin().ping();
-      } catch (err) {
-        console.error('Ping failed:', err);
-      }
+    const { name, email, password } = req.body;
+
+    // Validate input
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required.' });
     }
 
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-      database: {
-        state: dbState,
-        connected: dbState === 1,
-        ping: pingResult ? 'success' : 'failed',
-        host: mongoose.connection.host,
-        name: mongoose.connection.name
-      },
-      vercel: !!process.env.VERCEL,
-      mongoUri: {
-        exists: !!process.env.MONGODB_URI,
-        validFormat: uriTest.isValid,
-        formatError: uriTest.isValid ? null : uriTest.error
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists.' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword
+    });
+
+    await user.save();
+
+    // Generate token
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email
       }
     });
   } catch (error) {
-    console.error('Health check error:', error);
-    res.status(500).json({
-      status: 'error',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-      mongoUri: {
-        exists: !!process.env.MONGODB_URI,
-        validFormat: false,
-        formatError: error.message
+    res.status(500).json({ error: 'Server error during signup.' });
+  }
+});
+
+// Log In
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid credentials.' });
+    }
+
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(400).json({ error: 'Invalid credentials.' });
+    }
+
+    // Generate token
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email
       }
     });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error during login.' });
   }
 });
 
-// Test route
-app.get('/test', (req, res) => {
-  res.json({ message: 'Backend is working!' });
+// ==================== EVENT ROUTES ====================
+
+// Get user's own events
+app.get('/api/events', authenticateToken, async (req, res) => {
+  try {
+    const events = await Event.find({ userId: req.userId }).sort({ startTime: 1 });
+    res.json(events);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching events.' });
+  }
 });
 
-// Your existing routes and schemas here...
-
-// Initialize database and start server
-const startServer = async () => {
+// Create new event
+app.post('/api/events', authenticateToken, async (req, res) => {
   try {
-    await connectToMongoDB();
+    const { title, startTime, endTime, status } = req.body;
+
+    if (!title || !startTime || !endTime) {
+      return res.status(400).json({ error: 'Title, startTime, and endTime are required.' });
+    }
+
+    const event = new Event({
+      title,
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      status: status || 'BUSY',
+      userId: req.userId
+    });
+
+    await event.save();
+    res.status(201).json(event);
+  } catch (error) {
+    res.status(500).json({ error: 'Error creating event.' });
+  }
+});
+
+// Update event
+app.put('/api/events/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, startTime, endTime, status } = req.body;
+
+    const event = await Event.findOne({ _id: id, userId: req.userId });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+
+    // Prevent updating if swap is pending
+    if (event.status === 'SWAP_PENDING' && status !== 'SWAP_PENDING') {
+      return res.status(400).json({ error: 'Cannot update event with pending swap.' });
+    }
+
+    if (title) event.title = title;
+    if (startTime) event.startTime = new Date(startTime);
+    if (endTime) event.endTime = new Date(endTime);
+    if (status) event.status = status;
+
+    await event.save();
+    res.json(event);
+  } catch (error) {
+    res.status(500).json({ error: 'Error updating event.' });
+  }
+});
+
+// Delete event
+app.delete('/api/events/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
     
-    if (!process.env.VERCEL) {
-      // Local development - start the server
-      app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
-        console.log('Environment:', process.env.NODE_ENV || 'development');
-        console.log('Database Status:', mongoose.connection.readyState === 1 ? 'Connected' : 'Not Connected');
+    const event = await Event.findOne({ _id: id, userId: req.userId });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found.' });
+    }
+
+    // Prevent deletion if swap is pending
+    if (event.status === 'SWAP_PENDING') {
+      return res.status(400).json({ error: 'Cannot delete event with pending swap.' });
+    }
+
+    await Event.deleteOne({ _id: id });
+    res.json({ message: 'Event deleted successfully.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error deleting event.' });
+  }
+});
+
+// ==================== SWAP ROUTES ====================
+
+// Get all swappable slots from other users
+app.get('/api/swappable-slots', authenticateToken, async (req, res) => {
+  try {
+    const slots = await Event.find({
+      userId: { $ne: req.userId },
+      status: 'SWAPPABLE'
+    })
+    .populate('userId', 'name email')
+    .sort({ startTime: 1 });
+
+    res.json(slots);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching swappable slots.' });
+  }
+});
+
+// Create swap request
+app.post('/api/swap-request', authenticateToken, async (req, res) => {
+  try {
+    const { mySlotId, theirSlotId } = req.body;
+
+    if (!mySlotId || !theirSlotId) {
+      return res.status(400).json({ error: 'Both slot IDs are required.' });
+    }
+
+    // Verify my slot
+    const mySlot = await Event.findOne({ _id: mySlotId, userId: req.userId });
+    if (!mySlot) {
+      return res.status(404).json({ error: 'Your slot not found.' });
+    }
+    if (mySlot.status !== 'SWAPPABLE') {
+      return res.status(400).json({ error: 'Your slot must be swappable.' });
+    }
+
+    // Verify their slot
+    const theirSlot = await Event.findById(theirSlotId);
+    if (!theirSlot) {
+      return res.status(404).json({ error: 'Requested slot not found.' });
+    }
+    if (theirSlot.status !== 'SWAPPABLE') {
+      return res.status(400).json({ error: 'Requested slot is not available.' });
+    }
+    if (theirSlot.userId.toString() === req.userId.toString()) {
+      return res.status(400).json({ error: 'Cannot swap with your own slot.' });
+    }
+
+    // Create swap request
+    const swapRequest = new SwapRequest({
+      requesterId: req.userId,
+      requesterSlotId: mySlotId,
+      ownerId: theirSlot.userId,
+      ownerSlotId: theirSlotId,
+      status: 'PENDING'
+    });
+
+    await swapRequest.save();
+
+    // Update both slots to SWAP_PENDING
+    mySlot.status = 'SWAP_PENDING';
+    theirSlot.status = 'SWAP_PENDING';
+    await mySlot.save();
+    await theirSlot.save();
+
+    res.status(201).json({
+      message: 'Swap request created successfully.',
+      swapRequest
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Error creating swap request.' });
+  }
+});
+
+// Get incoming swap requests (requests to me)
+app.get('/api/swap-requests/incoming', authenticateToken, async (req, res) => {
+  try {
+    const requests = await SwapRequest.find({
+      ownerId: req.userId,
+      status: 'PENDING'
+    })
+    .populate('requesterId', 'name email')
+    .populate('requesterSlotId')
+    .populate('ownerSlotId')
+    .sort({ createdAt: -1 });
+
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching incoming requests.' });
+  }
+});
+
+// Get outgoing swap requests (requests I made)
+app.get('/api/swap-requests/outgoing', authenticateToken, async (req, res) => {
+  try {
+    const requests = await SwapRequest.find({
+      requesterId: req.userId,
+      status: 'PENDING'
+    })
+    .populate('ownerId', 'name email')
+    .populate('requesterSlotId')
+    .populate('ownerSlotId')
+    .sort({ createdAt: -1 });
+
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching outgoing requests.' });
+  }
+});
+
+// Respond to swap request
+app.post('/api/swap-response/:requestId', authenticateToken, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { accepted } = req.body;
+
+    if (typeof accepted !== 'boolean') {
+      return res.status(400).json({ error: 'Accepted field (boolean) is required.' });
+    }
+
+    // Find swap request
+    const swapRequest = await SwapRequest.findById(requestId);
+    if (!swapRequest) {
+      return res.status(404).json({ error: 'Swap request not found.' });
+    }
+
+    // Verify the user is the owner
+    if (swapRequest.ownerId.toString() !== req.userId.toString()) {
+      return res.status(403).json({ error: 'You are not authorized to respond to this request.' });
+    }
+
+    // Check if already responded
+    if (swapRequest.status !== 'PENDING') {
+      return res.status(400).json({ error: 'This request has already been responded to.' });
+    }
+
+    // Get both slots
+    const requesterSlot = await Event.findById(swapRequest.requesterSlotId);
+    const ownerSlot = await Event.findById(swapRequest.ownerSlotId);
+
+    if (!requesterSlot || !ownerSlot) {
+      return res.status(404).json({ error: 'One or both slots no longer exist.' });
+    }
+
+    if (accepted) {
+      // ACCEPT: Swap the owners
+      const tempUserId = requesterSlot.userId;
+      requesterSlot.userId = ownerSlot.userId;
+      ownerSlot.userId = tempUserId;
+
+      // Set both slots back to BUSY
+      requesterSlot.status = 'BUSY';
+      ownerSlot.status = 'BUSY';
+
+      await requesterSlot.save();
+      await ownerSlot.save();
+
+      swapRequest.status = 'ACCEPTED';
+      await swapRequest.save();
+
+      res.json({
+        message: 'Swap accepted successfully.',
+        swapRequest
+      });
+    } else {
+      // REJECT: Set both slots back to SWAPPABLE
+      requesterSlot.status = 'SWAPPABLE';
+      ownerSlot.status = 'SWAPPABLE';
+
+      await requesterSlot.save();
+      await ownerSlot.save();
+
+      swapRequest.status = 'REJECTED';
+      await swapRequest.save();
+
+      res.json({
+        message: 'Swap rejected.',
+        swapRequest
       });
     }
-  } catch (err) {
-    console.error('Failed to start server:', err);
-    process.exit(1);
+  } catch (error) {
+    res.status(500).json({ error: 'Error responding to swap request.' });
   }
-};
+});
 
-// Start server for local development
-if (!process.env.VERCEL) {
-  startServer();
-}
+// ==================== START SERVER ====================
 
-// Export the app for Vercel
-module.exports = app;
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
