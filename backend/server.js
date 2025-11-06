@@ -22,11 +22,26 @@ app.get('/test-db', async (req, res) => {
       2: 'Connecting',
       3: 'Disconnecting'
     };
+
+    // Try to perform a test operation
+    let testOp = 'Not attempted';
+    if (dbState === 1) {
+      try {
+        await mongoose.connection.db.admin().ping();
+        testOp = 'Success';
+      } catch (err) {
+        testOp = `Failed: ${err.message}`;
+      }
+    }
     
     res.json({ 
       status: 'success',
       dbConnection: stateMessages[dbState],
-      mongodbUri: process.env.MONGODB_URI ? 'Set' : 'Not set'
+      mongodbUri: process.env.MONGODB_URI ? 'Set' : 'Not set',
+      testOperation: testOp,
+      host: mongoose.connection.host || 'Not connected',
+      name: mongoose.connection.name || 'Not connected',
+      port: mongoose.connection.port || 'Not connected'
     });
   } catch (error) {
     res.status(500).json({ 
@@ -46,13 +61,32 @@ app.use(express.json());
 
 // MongoDB Connection
 console.log('Attempting to connect to MongoDB...');
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
+if (!process.env.MONGODB_URI) {
+  console.error('MONGODB_URI environment variable is not set!');
+  process.exit(1);
+}
+
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB connected successfully');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB disconnected');
+});
+
+mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
 }).then(() => {
-  console.log('Successfully connected to MongoDB.');
+  console.log('Initial MongoDB connection successful');
 }).catch(err => {
-  console.error('MongoDB connection error:', err);
+  console.error('Initial MongoDB connection error:', err);
 });
 
 // User Schema
