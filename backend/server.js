@@ -27,6 +27,9 @@ console.log('MongoDB URI:', process.env.MONGODB_URI ? 'URI is set' : 'URI is not
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  retryWrites: true,
+  w: 'majority',
+  dbName: 'slotswapper',
 }).then(() => {
   console.log('Connected to MongoDB successfully');
   
