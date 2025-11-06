@@ -33,15 +33,25 @@ app.get('/test-db', async (req, res) => {
         testOp = `Failed: ${err.message}`;
       }
     }
+
+    // Mask sensitive parts of MongoDB URI
+    let maskedUri = 'Not set';
+    if (process.env.MONGODB_URI) {
+      maskedUri = process.env.MONGODB_URI.replace(
+        /(mongodb\+srv:\/\/)([^:]+):([^@]+)@([^/]+)(.*)/,
+        (match, p1, p2, p3, p4, p5) => `${p1}${p2}:****@${p4}${p5}`
+      );
+    }
     
     res.json({ 
       status: 'success',
       dbConnection: stateMessages[dbState],
-      mongodbUri: process.env.MONGODB_URI ? 'Set' : 'Not set',
+      mongodbUri: maskedUri,
       testOperation: testOp,
       host: mongoose.connection.host || 'Not connected',
       name: mongoose.connection.name || 'Not connected',
-      port: mongoose.connection.port || 'Not connected'
+      port: mongoose.connection.port || 'Not connected',
+      error: mongoose.connection.error || 'No error'
     });
   } catch (error) {
     res.status(500).json({ 
@@ -60,14 +70,35 @@ app.use(cors({
 app.use(express.json());
 
 // MongoDB Connection
-console.log('Attempting to connect to MongoDB...');
-if (!process.env.MONGODB_URI) {
-  console.error('MONGODB_URI environment variable is not set!');
-  process.exit(1);
-}
+const connectWithRetry = async (retries = 5) => {
+  console.log('Attempting to connect to MongoDB...');
+  
+  if (!process.env.MONGODB_URI) {
+    console.error('MONGODB_URI environment variable is not set!');
+    return;
+  }
+
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000, // Timeout after 10s
+      socketTimeoutMS: 45000, // Close sockets after 45s
+      keepAlive: true,
+      keepAliveInitialDelay: 300000 // Initial delay of 5 minutes
+    });
+    console.log('MongoDB connected successfully');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    if (retries > 0) {
+      console.log(`Retrying connection... (${retries} attempts left)`);
+      setTimeout(() => connectWithRetry(retries - 1), 5000);
+    }
+  }
+};
 
 mongoose.connection.on('connected', () => {
-  console.log('MongoDB connected successfully');
+  console.log('MongoDB connection established');
 });
 
 mongoose.connection.on('error', (err) => {
@@ -76,18 +107,12 @@ mongoose.connection.on('error', (err) => {
 
 mongoose.connection.on('disconnected', () => {
   console.log('MongoDB disconnected');
+  // Try to reconnect
+  setTimeout(connectWithRetry, 5000);
 });
 
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
-}).then(() => {
-  console.log('Initial MongoDB connection successful');
-}).catch(err => {
-  console.error('Initial MongoDB connection error:', err);
-});
+// Initial connection
+connectWithRetry();
 
 // User Schema
 const userSchema = new mongoose.Schema({
