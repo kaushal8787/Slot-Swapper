@@ -20,23 +20,20 @@ app.get('/', (req, res) => {
   });
 });
 
-// Suppress deprecation warnings
-process.removeAllListeners('warning');
-
 // MongoDB Connection
 console.log('Attempting to connect to MongoDB...');
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
+const MONGODB_URI = 'mongodb+srv://sachinkaushal526:27698@cluster0.zyznqct.mongodb.net/slotswapper?retryWrites=true&w=majority';
+mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  retryWrites: true,
-  serverSelectionTimeoutMS: 5000, // 5 second timeout
-  w: 'majority',
+  serverSelectionTimeoutMS: 5000,
   dbName: 'slotswapper',
 }).then(() => {
-  console.log('Connected to MongoDB successfully');
+  console.log('✅ Connected to MongoDB Atlas successfully');
   console.log('Database Name:', mongoose.connection.name);
   console.log('Database Host:', mongoose.connection.host);
+  console.log('Connection State:', mongoose.connection.readyState === 1 ? 'Connected' : 'Not Connected');
   
   // Add connection status route
   app.get('/api/status', async (req, res) => {
@@ -501,8 +498,4 @@ app.post('/api/swap-response/:requestId', authenticateToken, async (req, res) =>
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
