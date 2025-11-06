@@ -7,9 +7,34 @@ require('dotenv').config();
 
 const app = express();
 
-// Test route
+// Test routes
 app.get('/test', (req, res) => {
   res.json({ message: 'Backend is working!' });
+});
+
+app.get('/test-db', async (req, res) => {
+  try {
+    // Check MongoDB connection
+    const dbState = mongoose.connection.readyState;
+    const stateMessages = {
+      0: 'Disconnected',
+      1: 'Connected',
+      2: 'Connecting',
+      3: 'Disconnecting'
+    };
+    
+    res.json({ 
+      status: 'success',
+      dbConnection: stateMessages[dbState],
+      mongodbUri: process.env.MONGODB_URI ? 'Set' : 'Not set'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'error',
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
 });
 
 // Middleware
