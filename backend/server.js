@@ -104,9 +104,6 @@ app.use(express.json());
 const connectWithRetry = async (retries = 5) => {
   console.log('Attempting to connect to MongoDB...');
   
-  // Hardcoded URI for testing
-  process.env.MONGODB_URI = "mongodb+srv://isachinkaushal:kaushal123@cluster0.2ulxub9.mongodb.net/slotswapper?retryWrites=true&w=majority";
-  
   if (!process.env.MONGODB_URI) {
     console.error('MONGODB_URI environment variable is not set!');
     return;
