@@ -47,7 +47,40 @@ const connectToMongoDB = async () => {
       throw new Error('MONGODB_URI environment variable is not set!');
     }
 
-    const uri = process.env.MONGODB_URI;
+    // Parse and validate MongoDB URI
+    let uri = process.env.MONGODB_URI;
+    
+    // Log connection attempt (safely)
+    try {
+      const maskedUri = uri.replace(
+        /(mongodb\+srv:\/\/)([^:]+):([^@]+)@([^/]+)(\/.*)?/,
+        (_, protocol, username, pass, host, db) => `${protocol}${username}:****@${host}${db || ''}`
+      );
+      console.log('Attempting connection to:', maskedUri);
+    } catch (e) {
+      console.log('Could not mask URI for logging');
+    }
+
+    // Validate URI format
+    if (!uri.startsWith('mongodb+srv://') && !uri.startsWith('mongodb://')) {
+      throw new Error('Invalid MongoDB URI format. Must start with mongodb+srv:// or mongodb://');
+    }
+
+    // Ensure proper encoding of username and password
+    try {
+      const urlParts = new URL(uri);
+      const username = decodeURIComponent(urlParts.username);
+      const password = decodeURIComponent(urlParts.password);
+      const host = urlParts.host;
+      const path = urlParts.pathname;
+      const search = urlParts.search;
+      
+      // Rebuild URI with properly encoded components
+      uri = `mongodb+srv://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}${path}${search}`;
+    } catch (e) {
+      console.error('Error parsing MongoDB URI:', e.message);
+      throw new Error('Invalid MongoDB URI format: ' + e.message);
+    }
 
     // Close existing connection if any
     if (mongoose.connection.readyState !== 0) {
@@ -60,18 +93,20 @@ const connectToMongoDB = async () => {
     await mongoose.connect(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 15000,
-      connectTimeoutMS: 15000,
-      socketTimeoutMS: 30000,
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
       maxPoolSize: 1,
       minPoolSize: 0,
       retryWrites: true,
       w: 'majority',
-      heartbeatFrequencyMS: 5000,
-      maxIdleTimeMS: 15000,
+      heartbeatFrequencyMS: 10000,
+      maxIdleTimeMS: 30000,
       autoCreate: false,
       bufferCommands: false,
-      readPreference: 'primary'
+      readPreference: 'primary',
+      family: 4, // Force IPv4
+      dnsSrvMaxRetries: 5 // Increase DNS retry attempts
     });
 
     isConnected = true;
