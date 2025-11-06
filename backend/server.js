@@ -20,23 +20,102 @@ app.get('/', (req, res) => {
   });
 });
 
-// MongoDB Connection
-console.log('Attempting to connect to MongoDB...');
+// Status route
+app.get('/api/status', async (req, res) => {
+  const connectionState = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const currentState = connectionState[mongoose.connection.readyState] || 'unknown';
+  
+  res.json({
+    database: {
+      status: currentState,
+      name: mongoose.connection.name || 'Not available',
+      host: mongoose.connection.host || 'Not available',
+      readyState: mongoose.connection.readyState
+    },
+    server: {
+      status: 'online',
+      version: '1.0.0',
+      environment: process.env.NODE_ENV || 'development'
+    }
+  });
+});
 
-const MONGODB_URI = 'mongodb+srv://sachinkaushal526:27698@cluster0.zyznqct.mongodb.net/slotswapper?retryWrites=true&w=majority';
-mongoose.connect(MONGODB_URI, {
+// Connect to MongoDB
+console.log('Attempting to connect to MongoDB...');
+mongoose.connect('mongodb+srv://sachinkaushal526:27698@cluster0.zyznqct.mongodb.net/slotswapper?retryWrites=true&w=majority', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 5000,
   dbName: 'slotswapper',
-}).then(() => {
+});
+
+mongoose.connection.on('connected', () => {
   console.log('✅ Connected to MongoDB Atlas successfully');
   console.log('Database Name:', mongoose.connection.name);
   console.log('Database Host:', mongoose.connection.host);
-  console.log('Connection State:', mongoose.connection.readyState === 1 ? 'Connected' : 'Not Connected');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB disconnected');
+});
+
+// Status route
+app.get('/api/status', async (req, res) => {
+  const connectionState = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const currentState = connectionState[mongoose.connection.readyState] || 'unknown';
   
-  // Add connection status route
-  app.get('/api/status', async (req, res) => {
+  res.json({
+    database: {
+      status: currentState,
+      name: mongoose.connection.name || 'Not available',
+      host: mongoose.connection.host || 'Not available',
+      readyState: mongoose.connection.readyState
+    },
+    server: {
+      status: 'online',
+      version: '1.0.0',
+      environment: process.env.NODE_ENV || 'development'
+    }
+  });
+});
+
+// MongoDB Connection
+console.log('Attempting to connect to MongoDB...');
+
+const MONGODB_URI = 'mongodb+srv://sachinkaushal526:27698@cluster0.zyznqct.mongodb.net/slotswapper?retryWrites=true&w=majority';
+
+// Connect to MongoDB
+try {
+  mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000,
+    dbName: 'slotswapper',
+  });
+
+  mongoose.connection.on('connected', () => {
+    console.log('✅ Connected to MongoDB Atlas successfully');
+    console.log('Database Name:', mongoose.connection.name);
+    console.log('Database Host:', mongoose.connection.host);
+  });
+
+  mongoose.connection.on('error', (err) => {
+    console.error('MongoDB connection error:', err);
+  });
+
+  mongoose.connection.on('disconnected', () => {
+    console.log('MongoDB disconnected');
+  });
+
+} catch (error) {
+  console.error('Error connecting to MongoDB:', error);
+}).catch((err) => {
+  console.error('MongoDB connection error:', err);
+});
     try {
       const connectionState = ['disconnected', 'connected', 'connecting', 'disconnecting'];
       const currentState = connectionState[mongoose.connection.readyState] || 'unknown';
