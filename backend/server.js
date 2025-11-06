@@ -21,11 +21,46 @@ app.get('/', (req, res) => {
 });
 
 // MongoDB Connection
+console.log('Attempting to connect to MongoDB...');
+console.log('MongoDB URI:', process.env.MONGODB_URI ? 'URI is set' : 'URI is not set');
+
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapper', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 }).then(() => {
   console.log('Connected to MongoDB successfully');
+  
+  // Add connection status route
+  app.get('/api/status', async (req, res) => {
+    try {
+      // Check if we can perform a basic operation
+      await mongoose.connection.db.admin().ping();
+      res.json({
+        database: {
+          status: 'connected',
+          name: mongoose.connection.name,
+          host: mongoose.connection.host,
+          readyState: mongoose.connection.readyState
+        },
+        server: {
+          status: 'online',
+          version: '1.0.0'
+        }
+      });
+    } catch (error) {
+      res.status(500).json({
+        database: {
+          status: 'error',
+          error: error.message,
+          readyState: mongoose.connection.readyState
+        },
+        server: {
+          status: 'online',
+          version: '1.0.0'
+        }
+      });
+    }
+  });
 }).catch((err) => {
   console.error('MongoDB connection error:', err);
 });
