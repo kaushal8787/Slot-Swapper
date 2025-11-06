@@ -33,18 +33,21 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapp
   // Add connection status route
   app.get('/api/status', async (req, res) => {
     try {
-      // Check if we can perform a basic operation
-      await mongoose.connection.db.admin().ping();
+      const connectionState = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+      const currentState = connectionState[mongoose.connection.readyState] || 'unknown';
+      
       res.json({
         database: {
-          status: 'connected',
-          name: mongoose.connection.name,
-          host: mongoose.connection.host,
-          readyState: mongoose.connection.readyState
+          status: currentState,
+          name: mongoose.connection.name || 'Not available',
+          host: mongoose.connection.host || 'Not available',
+          readyState: mongoose.connection.readyState,
+          uri: process.env.MONGODB_URI ? 'URI is set' : 'URI is not set'
         },
         server: {
           status: 'online',
-          version: '1.0.0'
+          version: '1.0.0',
+          environment: process.env.NODE_ENV || 'development'
         }
       });
     } catch (error) {
@@ -52,11 +55,13 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/slotswapp
         database: {
           status: 'error',
           error: error.message,
-          readyState: mongoose.connection.readyState
+          readyState: mongoose.connection.readyState,
+          uri: process.env.MONGODB_URI ? 'URI is set' : 'URI is not set'
         },
         server: {
           status: 'online',
-          version: '1.0.0'
+          version: '1.0.0',
+          environment: process.env.NODE_ENV || 'development'
         }
       });
     }
